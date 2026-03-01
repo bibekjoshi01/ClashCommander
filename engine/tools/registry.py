@@ -1,23 +1,28 @@
-from typing import Dict
+from typing import Dict, List
 from .base import BaseTool
 
 
 class ToolRegistry:
-    def __init__(self, tools: list[BaseTool]):
-        self._tools: Dict[str, BaseTool] = {tool.name: tool for tool in tools}
+    """
+    Central registry for all available tools.
+    """
 
-    def list_schemas(self):
-        return [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema,
-            }
-            for tool in self._tools.values()
-        ]
+    _tools: Dict[str, BaseTool] = {}
 
-    async def execute(self, name: str, input_data: dict):
-        tool = self._tools.get(name)
-        if not tool:
-            raise ValueError(f"Unknown tool: {name}")
-        return await tool.execute(input_data)
+    @classmethod
+    def register(cls, tool: BaseTool) -> None:
+        cls._tools[tool.name] = tool
+
+    @classmethod
+    def get(cls, name: str) -> BaseTool:
+        if name not in cls._tools:
+            raise ValueError(f"Tool '{name}' not registered.")
+        return cls._tools[name]
+
+    @classmethod
+    def list_schemas(cls) -> List[Dict]:
+        return [tool.to_schema() for tool in cls._tools.values()]
+
+    @classmethod
+    def list_names(cls) -> List[str]:
+        return list(cls._tools.keys())

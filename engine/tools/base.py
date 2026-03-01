@@ -1,67 +1,33 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
-import asyncio
-
-
-@dataclass
-class ToolExecutionResult:
-    success: bool
-    output: Optional[str] = None
-    error: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    screenshot_base64: Optional[str] = None
+from typing import Dict, Any
 
 
 class BaseTool(ABC):
     """
-    Provider-agnostic tool contract.
-    Strict-mode compliant.
+    Abstract base class for any tool callable by the LLM.
     """
 
     name: str
     description: str
-    input_schema: Dict[str, Any]
-    timeout_seconds: int = 60  # default safety timeout
-
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Returns JSON schema in provider-compatible format.
-        """
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.input_schema,
-        }
-
-    async def run(self, input_data: Dict[str, Any]) -> ToolExecutionResult:
-        """
-        Public execution wrapper.
-        Handles timeout and error normalization.
-        """
-
-        try:
-            return await asyncio.wait_for(
-                self.execute(input_data),
-                timeout=self.timeout_seconds,
-            )
-
-        except asyncio.TimeoutError:
-            return ToolExecutionResult(
-                success=False,
-                error=f"Tool '{self.name}' timed out after {self.timeout_seconds}s",
-            )
-
-        except Exception as e:
-            return ToolExecutionResult(
-                success=False,
-                error=str(e),
-            )
+    parameters: Dict[str, Any]
 
     @abstractmethod
-    async def execute(self, input_data: Dict[str, Any]) -> ToolExecutionResult:
+    async def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Tool-specific implementation.
-        Must return ToolExecutionResult.
+        Execute the tool with validated arguments.
+        Must return JSON-serializable result.
         """
-        raise NotImplementedError
+        pass
+
+    def to_schema(self) -> Dict[str, Any]:
+        """
+        Convert tool definition into OpenAI-compatible function schema.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
