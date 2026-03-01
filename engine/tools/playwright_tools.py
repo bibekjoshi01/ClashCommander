@@ -1,6 +1,6 @@
 from playwright.async_api import Page
 from .base import BaseTool
-from .result import ToolResult
+from .base import ToolExecutionResult
 
 
 class ClickTool(BaseTool):
@@ -14,6 +14,6 @@ class ClickTool(BaseTool):
         selector = arguments.get("selector")
         try:
             await self.page.click(selector)
-            return ToolResult(output=f"Clicked {selector}")
+            return ToolExecutionResult(output=f"Clicked {selector}")
         except Exception as e:
-            return ToolResult(error=str(e))
+            return ToolExecutionResult(error=str(e))
