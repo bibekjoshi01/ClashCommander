@@ -10,10 +10,15 @@ from engine.providers import ProviderFactory
 from engine.tools import (
     BaseTool,
     BashTool,
+    ButtonClickCheckerTool,
     ConsoleNetworkAuditTool,
+    DeadLinkCheckerTool,
+    FormValidatorTool,
+    LoginFlowCheckerTool,
     PageAuditTool,
     PerformanceAuditTool,
     PlaywrightComputerTool,
+    SessionPersistenceCheckerTool,
     SecurityHeadersAuditTool,
     ToolCollection,
 )
@@ -82,6 +87,13 @@ class Engine:
             [
                 computer_tool,
                 BashTool(),
+                DeadLinkCheckerTool(fallback_url=target_url),
+                FormValidatorTool(fallback_url=target_url),
+                ButtonClickCheckerTool(fallback_url=target_url),
+                LoginFlowCheckerTool(computer_tool=computer_tool, fallback_url=target_url),
+                SessionPersistenceCheckerTool(
+                    computer_tool=computer_tool, fallback_url=target_url
+                ),
                 PageAuditTool(computer_tool=computer_tool),
                 ConsoleNetworkAuditTool(computer_tool=computer_tool),
                 PerformanceAuditTool(computer_tool=computer_tool),

@@ -244,6 +244,150 @@ class PlaywrightComputerTool(BaseTool):
         await self._ensure_browser()
         return self._request_failures[-limit:]
 
+    async def navigate(self, url: str) -> None:
+        await self._ensure_browser()
+        assert self._page is not None
+        target = url
+        if not target.startswith(("http://", "https://")):
+            target = f"https://{target}"
+        await self._safe_goto(target)
+
+    async def reload(self) -> None:
+        await self._ensure_browser()
+        assert self._page is not None
+        await self._page.reload(wait_until="domcontentloaded", timeout=30000)
+
+    async def get_cookies(self) -> list[dict[str, Any]]:
+        await self._ensure_browser()
+        assert self._context is not None
+        return await self._context.cookies()
+
+    async def inspect_login_surface(self) -> dict[str, Any]:
+        await self._ensure_browser()
+        assert self._page is not None
+        return await self._page.evaluate(
+            """
+            () => {
+                const passwordInputs = Array.from(document.querySelectorAll('input[type="password"]'));
+                const emailInputs = Array.from(document.querySelectorAll('input[type="email"], input[name*="email" i], input[name*="user" i], input[id*="email" i], input[id*="user" i]'));
+                const formsWithPassword = Array.from(document.querySelectorAll('form')).filter(f => f.querySelector('input[type="password"]')).length;
+                return {
+                    password_input_count: passwordInputs.length,
+                    email_or_user_input_count: emailInputs.length,
+                    forms_with_password_count: formsWithPassword,
+                };
+            }
+            """
+        )
+
+    async def attempt_login(self, username: str, password: str) -> dict[str, Any]:
+        await self._ensure_browser()
+        assert self._page is not None
+        assert self._context is not None
+
+        before_url = self._page.url
+        before_cookies = await self._context.cookies()
+        before_cookie_names = {str(item.get("name", "")) for item in before_cookies}
+
+        user_selectors = [
+            'input[type="email"]',
+            'input[name*="email" i]',
+            'input[id*="email" i]',
+            'input[name*="user" i]',
+            'input[id*="user" i]',
+            'input[type="text"]',
+        ]
+        pass_selectors = [
+            'input[type="password"]',
+        ]
+        submit_selectors = [
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button[id*="login" i]',
+            'button[name*="login" i]',
+            'button:has-text("Login")',
+            'button:has-text("Sign in")',
+        ]
+
+        username_filled = False
+        password_filled = False
+        submitted = False
+
+        for selector in user_selectors:
+            el = await self._page.query_selector(selector)
+            if el:
+                try:
+                    await el.fill(username)
+                    username_filled = True
+                    break
+                except Exception:
+                    pass
+
+        for selector in pass_selectors:
+            el = await self._page.query_selector(selector)
+            if el:
+                try:
+                    await el.fill(password)
+                    password_filled = True
+                    break
+                except Exception:
+                    pass
+
+        for selector in submit_selectors:
+            el = await self._page.query_selector(selector)
+            if el:
+                try:
+                    await el.click(timeout=5000)
+                    submitted = True
+                    break
+                except Exception:
+                    pass
+
+        if not submitted and password_filled:
+            try:
+                await self._page.keyboard.press("Enter")
+                submitted = True
+            except Exception:
+                pass
+
+        try:
+            await self._page.wait_for_load_state("domcontentloaded", timeout=8000)
+        except Exception:
+            pass
+
+        after_url = self._page.url
+        after_cookies = await self._context.cookies()
+        after_cookie_names = {str(item.get("name", "")) for item in after_cookies}
+        added_cookie_names = sorted(list(after_cookie_names - before_cookie_names))
+
+        error_text_detected = False
+        try:
+            error_text_detected = bool(
+                await self._page.evaluate(
+                    """
+                    () => {
+                        const body = (document.body?.innerText || '').toLowerCase();
+                        const hints = ['invalid', 'incorrect', 'failed', 'wrong password', 'unauthorized', 'login failed'];
+                        return hints.some(h => body.includes(h));
+                    }
+                    """
+                )
+            )
+        except Exception:
+            pass
+
+        likely_success = bool(submitted and ((after_url != before_url) or len(added_cookie_names) > 0) and not error_text_detected)
+        return {
+            "before_url": before_url,
+            "after_url": after_url,
+            "username_filled": username_filled,
+            "password_filled": password_filled,
+            "submitted": submitted,
+            "added_cookie_names": added_cookie_names,
+            "error_text_detected": error_text_detected,
+            "likely_success": likely_success,
+        }
+
     async def collect_page_snapshot(self) -> dict[str, Any]:
         await self._ensure_browser()
         assert self._page is not None
