@@ -2,11 +2,13 @@ from .base import BaseLLMProvider, LLMMessage, LLMRequest, LLMResponse, LLMToolC
 from .factory import ProviderFactory
 from .registry import ProviderRegistry
 
-# Import built-in providers so they self-register. Keep optional deps lazy.
+# Import built-in providers so they self-register.
+from .hugging_face import HuggingFaceProvider
+
 try:
     from .mistral import MistralProvider
 except ModuleNotFoundError:
-    MistralProvider = None  # type: ignore[assignment]
+    MistralProvider = None
 
 __all__ = [
     "BaseLLMProvider",
@@ -17,4 +19,5 @@ __all__ = [
     "ProviderFactory",
     "ProviderRegistry",
     "MistralProvider",
+    "HuggingFaceProvider",
 ]

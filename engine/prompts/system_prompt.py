@@ -1,36 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable, Optional
+from typing import Iterable
 
-from engine.prompts.personas import PERSONA_PROFILES
 from engine.tools.base import BaseTool
 
 
 def build_system_prompt(
     tools: Iterable[BaseTool],
     locale: str = "en-US",
-    persona: Optional[str] = None,
     device_profile: str = "iphone_14",
     network_profile: str = "wifi",
 ) -> str:
-    tool_list = "\n".join(
-        f"- {tool.name}: {tool.description}" for tool in tools
-    )
-    persona_section = ""
-    if persona and persona in PERSONA_PROFILES:
-        p = PERSONA_PROFILES[persona]
-        persona_section = (
-            f"\nPersona under test: {p['label']}.\n"
-            f"Behavior guidance: {p['behavior']}\n"
-        )
+    tool_list = "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
 
     return f"""
 You are an autonomous QA engineer for web applications.
 Current date: {datetime.today().strftime('%Y-%m-%d')}.
 Locale under test: {locale}.
 Device profile: {device_profile}.
-Network profile: {network_profile}.{persona_section}
+Network profile: {network_profile}
 
 Goals:
 1. Explore the target website like a user.

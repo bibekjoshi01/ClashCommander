@@ -19,9 +19,7 @@ from engine.tools import (
     ToolCollection,
 )
 
-DEFAULT_QA_TASK = (
-    "Explore main user flows and report functional, UX, accessibility, performance, and security issues."
-)
+DEFAULT_QA_TASK = "Explore main user flows and report functional, UX, accessibility, performance, and security issues."
 
 
 class Engine:
@@ -38,14 +36,20 @@ class Engine:
         temperature: float = 0.2,
         max_tokens: int = 4096,
         locale: str = "en-US",
-        persona: Optional[str] = None,
         device_profile: str = "iphone_14",
         network_profile: str = "wifi",
     ):
         provider_kwargs = provider_kwargs or {}
 
-        if provider_name == "mistral" and "api_key" not in provider_kwargs:
+        if provider_name == "mistral":
             provider_kwargs["api_key"] = os.getenv("MISTRAL_API_KEY", "")
+        if provider_name == "huggingface":
+            api_key = os.getenv("HUGGINGFACE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Hugging Face API key not set. Set HUGGINGFACE_API_KEY in your environment."
+                )
+            provider_kwargs["api_key"] = api_key
 
         self.provider = ProviderFactory.create(
             name=provider_name,
@@ -57,7 +61,6 @@ class Engine:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.locale = locale
-        self.persona = persona
         self.device_profile = device_profile
         self.network_profile = network_profile
 
@@ -104,7 +107,6 @@ class Engine:
         system_prompt = build_system_prompt(
             tools=[tools.get(n) for n in tools.list_names()],
             locale=self.locale,
-            persona=self.persona,
             device_profile=self.device_profile,
             network_profile=self.network_profile,
         )
@@ -123,7 +125,9 @@ class Engine:
         )
 
         try:
-            return await orchestrator.execute(system_prompt=system_prompt, user_prompt=user_prompt)
+            return await orchestrator.execute(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            )
         finally:
             await tools.close()
 
