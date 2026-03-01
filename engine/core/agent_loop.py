@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import List
 
 from engine.providers.base import BaseLLMProvider, LLMMessage, LLMRequest
@@ -91,10 +92,11 @@ class QAOrchestrator:
             return ToolExecutionResult(success=False, error=str(exc))
 
     def _tool_result_to_message(self, tool_result: ToolExecutionResult) -> str:
-        if tool_result.success:
-            if tool_result.output:
-                return tool_result.output
-            if tool_result.screenshot_base64:
-                return "Screenshot captured"
-            return "Tool executed successfully"
-        return f"Tool execution failed: {tool_result.error or 'unknown error'}"
+        payload = {
+            "success": tool_result.success,
+            "output": tool_result.output,
+            "error": tool_result.error,
+            "has_screenshot": bool(tool_result.screenshot_base64),
+            "metadata": tool_result.metadata,
+        }
+        return json.dumps(payload)

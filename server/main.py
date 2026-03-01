@@ -32,6 +32,9 @@ class QARequest(BaseModel):
     model: str = Field(default="mistral-large-latest", description="Model name")
     max_iterations: int = Field(default=20, ge=1, le=100)
     locale: str = Field(default="en-US")
+    persona: Optional[str] = Field(default=None)
+    device_profile: str = Field(default="iphone_14")
+    network_profile: str = Field(default="wifi")
     provider_kwargs: Optional[Dict[str, Any]] = Field(default=None)
 
 
@@ -71,6 +74,9 @@ async def qa_endpoint(request: QARequest):
             provider_kwargs=request.provider_kwargs,
             max_iterations=request.max_iterations,
             locale=request.locale,
+            persona=request.persona,
+            device_profile=request.device_profile,
+            network_profile=request.network_profile,
         )
         result = await qa_engine.run_task(task)
     except Exception as exc:

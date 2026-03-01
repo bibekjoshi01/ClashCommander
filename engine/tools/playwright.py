@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from typing import Any, Dict, Literal, Optional, get_args
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
@@ -30,6 +31,16 @@ Action = Literal[
 ScrollDirection = Literal["up", "down", "left", "right"]
 
 DEVICE_PROFILES: Dict[str, Dict[str, Any]] = {
+    "iphone_se": {
+        "viewport": {"width": 375, "height": 667},
+        "user_agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1"
+        ),
+        "device_scale_factor": 2,
+        "is_mobile": True,
+        "has_touch": True,
+    },
     "iphone_14": {
         "viewport": {"width": 390, "height": 844},
         "user_agent": (
@@ -40,8 +51,38 @@ DEVICE_PROFILES: Dict[str, Dict[str, Any]] = {
         "is_mobile": True,
         "has_touch": True,
     },
+    "pixel_7": {
+        "viewport": {"width": 412, "height": 915},
+        "user_agent": (
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+        ),
+        "device_scale_factor": 2.625,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "galaxy_s23": {
+        "viewport": {"width": 360, "height": 780},
+        "user_agent": (
+            "Mozilla/5.0 (Linux; Android 13; SM-S911B) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+        ),
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
     "desktop": {
         "viewport": {"width": 1280, "height": 800},
+        "user_agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "device_scale_factor": 1,
+        "is_mobile": False,
+        "has_touch": False,
+    },
+    "desktop_1440": {
+        "viewport": {"width": 1440, "height": 900},
         "user_agent": (
             "Mozilla/5.0 (X11; Linux x86_64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -60,11 +101,29 @@ NETWORK_PROFILES: Dict[str, Dict[str, Any]] = {
         "upload_throughput": 9000 * 1024 // 8,
         "latency": 80,
     },
+    "fast_3g": {
+        "offline": False,
+        "download_throughput": 1600 * 1024 // 8,
+        "upload_throughput": 750 * 1024 // 8,
+        "latency": 150,
+    },
     "slow_3g": {
         "offline": False,
         "download_throughput": 400 * 1024 // 8,
         "upload_throughput": 400 * 1024 // 8,
         "latency": 400,
+    },
+    "high_latency": {
+        "offline": False,
+        "download_throughput": 2000 * 1024 // 8,
+        "upload_throughput": 2000 * 1024 // 8,
+        "latency": 800,
+    },
+    "offline": {
+        "offline": True,
+        "download_throughput": 0,
+        "upload_throughput": 0,
+        "latency": 0,
     },
 }
 
@@ -89,6 +148,7 @@ KEY_ALIAS: Dict[str, str] = {
 class PlaywrightComputerTool(BaseTool):
     name = "computer"
     description = "Control a Playwright browser with coordinate-based actions."
+    timeout_seconds = 90
     input_schema = {
         "type": "object",
         "properties": {
@@ -158,11 +218,114 @@ class PlaywrightComputerTool(BaseTool):
         self._cursor_x = 0
         self._cursor_y = 0
 
+        self._console_events: list[str] = []
+        self._request_failures: list[str] = []
+
+    @property
+    def current_url(self) -> Optional[str]:
+        if self._page:
+            return self._page.url
+        return self._target_url
+
     def _translate_key(self, key_name: str) -> str:
         if "+" in key_name:
             parts = [p.strip() for p in key_name.split("+")]
             return "+".join(KEY_ALIAS.get(p.lower(), p) for p in parts)
         return KEY_ALIAS.get(key_name.lower(), key_name)
+
+    async def ensure_ready(self) -> None:
+        await self._ensure_browser()
+
+    async def get_console_events(self, limit: int = 50) -> list[str]:
+        await self._ensure_browser()
+        return self._console_events[-limit:]
+
+    async def get_request_failures(self, limit: int = 50) -> list[str]:
+        await self._ensure_browser()
+        return self._request_failures[-limit:]
+
+    async def collect_page_snapshot(self) -> dict[str, Any]:
+        await self._ensure_browser()
+        assert self._page is not None
+        metrics = await self._page.evaluate(
+            """
+            () => {
+                const all = Array.from(document.querySelectorAll('*'));
+                const links = Array.from(document.querySelectorAll('a'));
+                const forms = Array.from(document.querySelectorAll('form'));
+                const imgs = Array.from(document.querySelectorAll('img'));
+                const smallTargets = all
+                  .filter(el => ['A','BUTTON','INPUT','TEXTAREA','SELECT'].includes(el.tagName))
+                  .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 && (r.width < 44 || r.height < 44);
+                  }).length;
+                const unlabeledInputs = Array.from(document.querySelectorAll('input,textarea,select')).filter(el => {
+                  const id = el.getAttribute('id');
+                  if (id && document.querySelector(`label[for="${id}"]`)) return false;
+                  if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return false;
+                  return true;
+                }).length;
+                const missingAlt = imgs.filter(i => !i.getAttribute('alt')).length;
+                const insecureForms = forms.filter(f => {
+                  const action = (f.getAttribute('action') || '').trim();
+                  return action.startsWith('http://');
+                }).length;
+                const inlineScripts = document.querySelectorAll('script:not([src])').length;
+                const mixedContent = Array.from(document.querySelectorAll('img,script,link,iframe'))
+                  .map(el => el.getAttribute('src') || el.getAttribute('href') || '')
+                  .filter(v => typeof v === 'string' && v.startsWith('http://')).length;
+
+                return {
+                  title: document.title || '',
+                  total_elements: all.length,
+                  links: links.length,
+                  forms: forms.length,
+                  images: imgs.length,
+                  missing_alt_images: missingAlt,
+                  small_touch_targets: smallTargets,
+                  unlabeled_form_controls: unlabeledInputs,
+                  insecure_form_actions: insecureForms,
+                  inline_script_blocks: inlineScripts,
+                  mixed_content_references: mixedContent,
+                };
+            }
+            """
+        )
+        return metrics
+
+    async def collect_perf_metrics(self) -> dict[str, Any]:
+        await self._ensure_browser()
+        assert self._page is not None
+        return await self._page.evaluate(
+            """
+            () => {
+                const out = {};
+                const nav = performance.getEntriesByType('navigation');
+                if (nav.length > 0) {
+                    const n = nav[0];
+                    out.ttfb_ms = n.responseStart - n.requestStart;
+                    out.dom_content_loaded_ms = n.domContentLoadedEventEnd - n.startTime;
+                    out.load_event_ms = n.loadEventEnd - n.startTime;
+                }
+                const fcp = performance.getEntriesByName('first-contentful-paint');
+                if (fcp.length > 0) out.fcp_ms = fcp[0].startTime;
+                const lcp = performance.getEntriesByType('largest-contentful-paint');
+                if (lcp.length > 0) out.lcp_ms = lcp[lcp.length - 1].startTime;
+                const cls = performance.getEntriesByType('layout-shift');
+                if (cls.length > 0) {
+                    let score = 0;
+                    for (const e of cls) {
+                        if (!e.hadRecentInput) score += e.value;
+                    }
+                    out.cls = score;
+                }
+                const resources = performance.getEntriesByType('resource');
+                out.resource_count = resources.length;
+                return out;
+            }
+            """
+        )
 
     async def _ensure_browser(self) -> None:
         if self._page is not None:
@@ -186,8 +349,18 @@ class PlaywrightComputerTool(BaseTool):
         self._context = await self._browser.new_context(**context_opts)
         self._page = await self._context.new_page()
 
+        self._page.on("console", lambda msg: self._console_events.append(f"[{msg.type}] {msg.text}"))
+        self._page.on("pageerror", lambda exc: self._console_events.append(f"[pageerror] {exc}"))
+        self._page.on(
+            "requestfailed",
+            lambda req: self._request_failures.append(
+                f"{req.method} {req.url} :: {req.failure.error_text if req.failure else 'failed'}"
+            ),
+        )
+
         if self._network and self._network.get("latency") is not None:
             try:
+                assert self._context is not None
                 cdp = await self._context.new_cdp_session(self._page)
                 await cdp.send(
                     "Network.emulateNetworkConditions",
@@ -205,13 +378,24 @@ class PlaywrightComputerTool(BaseTool):
             url = self._target_url
             if not url.startswith(("http://", "https://")):
                 url = f"https://{url}"
+            await self._safe_goto(url)
+
+    async def _safe_goto(self, url: str) -> None:
+        assert self._page is not None
+        try:
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception:
+            await self._page.goto(url, wait_until="load", timeout=45000)
 
     async def _take_screenshot(self) -> ToolExecutionResult:
         assert self._page is not None
         png_bytes = await self._page.screenshot(type="png")
         image_b64 = base64.b64encode(png_bytes).decode("utf-8")
-        return ToolExecutionResult(success=True, screenshot_base64=image_b64)
+        return ToolExecutionResult(
+            success=True,
+            screenshot_base64=image_b64,
+            metadata={"url": self.current_url},
+        )
 
     def _validate_coordinate(self, coordinate: Any, required: bool = True) -> tuple[int, int]:
         if coordinate is None:
@@ -247,9 +431,20 @@ class PlaywrightComputerTool(BaseTool):
                 scroll_amount=arguments.get("scroll_amount"),
                 duration=arguments.get("duration"),
             )
+            if not result.metadata:
+                result.metadata = {}
+            result.metadata.setdefault("url", self.current_url)
+            result.metadata.setdefault("console_event_count", len(self._console_events))
+            result.metadata.setdefault("request_failure_count", len(self._request_failures))
             return result
         except Exception as e:
-            return ToolExecutionResult(success=False, error=str(e))
+            error_result = ToolExecutionResult(success=False, error=str(e), metadata={"url": self.current_url})
+            try:
+                shot = await self._take_screenshot()
+                error_result.screenshot_base64 = shot.screenshot_base64
+            except Exception:
+                pass
+            return error_result
 
     async def _dispatch_action(
         self,
@@ -288,7 +483,13 @@ class PlaywrightComputerTool(BaseTool):
             elif action == "triple_click":
                 click_count = 3
 
-            await self._page.mouse.click(self._cursor_x, self._cursor_y, button=button, click_count=click_count)
+            await self._page.mouse.click(
+                self._cursor_x,
+                self._cursor_y,
+                button=button,
+                click_count=click_count,
+                timeout=15000,
+            )
             await asyncio.sleep(self._screenshot_delay)
             return await self._take_screenshot()
 
@@ -392,3 +593,5 @@ class PlaywrightComputerTool(BaseTool):
         self._browser = None
         self._playwright = None
         self._page = None
+        self._console_events = []
+        self._request_failures = []

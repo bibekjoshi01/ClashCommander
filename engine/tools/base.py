@@ -22,6 +22,7 @@ class BaseTool(ABC):
     name: str
     description: str
     input_schema: Dict[str, Any]
+    timeout_seconds: int = 30
 
     @abstractmethod
     async def execute(self, arguments: Dict[str, Any]) -> ToolExecutionResult:

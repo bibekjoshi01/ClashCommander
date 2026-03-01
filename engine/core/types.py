@@ -11,7 +11,10 @@ class QATask:
     """Input for a QA run."""
 
     target_url: str
-    task: str = "Explore the main user flow and report functional, UX, and accessibility issues."
+    task: str = (
+        "Explore the main user flow and report functional, UX, accessibility, "
+        "performance, and security issues."
+    )
     context: Optional[Dict[str, Any]] = None
 
 
