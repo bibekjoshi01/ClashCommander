@@ -20,7 +20,7 @@ export default function ScanHistoryPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="font-medium text-slate-100">{item.targetUrl}</p>
-              <p className="text-xs text-slate-500">{new Date(item.startedAt).toLocaleString()}</p>
+              <p className="text-xs text-slate-500">{item.startedAt ? new Date(item.startedAt).toLocaleString() : "time unavailable"}</p>
             </div>
             <div className="flex items-center gap-2">
               <Badge tone="warn">Risk {item.riskScore}</Badge>

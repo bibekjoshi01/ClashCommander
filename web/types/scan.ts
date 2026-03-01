@@ -1,13 +1,15 @@
 export type RunStatus = "Idle" | "Scanning" | "Analyzing" | "Completed" | "Failed";
 
-export type Severity = "P1" | "P2";
+export type Severity = "P1" | "P2" | "P3" | "Unknown";
 
 export interface ScanIssue {
   id: string;
   severity: Severity;
   title: string;
-  category: "Performance" | "Security" | "Accessibility" | "Network";
+  category: string;
   description: string;
+  stepsToReproduce: string[];
+  severityJustification: string;
 }
 
 export interface PerfMetric {
@@ -31,38 +33,41 @@ export interface CookieFinding {
 
 export interface ScreenshotItem {
   id: string;
-  step: string;
-  ts: string;
+  label: string;
   url: string;
   failed?: boolean;
 }
 
 export interface TraceStep {
   id: string;
-  title: string;
-  ts: string;
-  status: "success" | "failed" | "running";
-  toolCall: string;
-  summary: string;
-  screenshot?: string;
+  step: number;
+  status: "success" | "failed";
+  assistantContent: string;
+  toolCalls: BackendTraceToolCall[];
+  output: string | null;
+  outputJson: Record<string, unknown> | null;
+  error: string | null;
+  metadata: Record<string, unknown>;
+  screenshotUrl?: string;
 }
 
 export interface ScanReport {
   id: string;
   targetUrl: string;
-  httpStatus: number;
+  httpStatus: number | null;
   riskScore: number;
   performanceScore: number;
   runStatus: RunStatus;
-  startedAt: string;
+  startedAt?: string;
   completedAt?: string;
-  severity: { p1: number; p2: number };
+  severity: { p1: number; p2: number; p3: number; unknown: number };
   issues: ScanIssue[];
   performance: PerfMetric[];
   security: SecurityFinding[];
   cookies: CookieFinding[];
   screenshots: ScreenshotItem[];
   trace: TraceStep[];
+  toolOutputs: BackendToolOutput[];
   rawModelOutput: string;
   rawJson: Record<string, unknown>;
   logs: string[];

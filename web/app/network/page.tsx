@@ -12,5 +12,5 @@ export default function NetworkPage() {
   });
 
   if (!data) return null;
-  return <IssueTable issues={data.issues.filter((item) => item.category === "Network")} />;
+  return <IssueTable issues={data.issues.filter((item) => ["network", "functional"].includes(item.category.toLowerCase()))} />;
 }

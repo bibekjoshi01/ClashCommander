@@ -20,8 +20,8 @@ function MetricDial({ label, score }: { label: string; score: number }) {
 }
 
 export function SummarySection({ report }: { report: ScanReport }) {
-  const severityTotal = report.severity.p1 + report.severity.p2;
-  const p1Width = `${(report.severity.p1 / severityTotal) * 100}%`;
+  const severityTotal = report.severity.p1 + report.severity.p2 + report.severity.p3 + report.severity.unknown;
+  const p1Width = severityTotal === 0 ? "0%" : `${(report.severity.p1 / severityTotal) * 100}%`;
 
   return (
     <Card className="p-6">
@@ -31,7 +31,7 @@ export function SummarySection({ report }: { report: ScanReport }) {
           <h1 className="text-lg font-semibold text-slate-100">{report.targetUrl}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Badge tone={report.httpStatus < 400 ? "good" : "critical"}>HTTP {report.httpStatus}</Badge>
+          <Badge tone={report.httpStatus !== null && report.httpStatus < 400 ? "good" : "critical"}>HTTP {report.httpStatus ?? "unknown"}</Badge>
           <Badge tone="warn">Risk {report.riskScore}/100</Badge>
         </div>
       </div>

@@ -165,11 +165,11 @@ export function DashboardView() {
             </div>
             <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-3 py-2">
               <span className="text-slate-500">HTTP</span>
-              <span className="text-slate-200">{data.httpStatus}</span>
+              <span className="text-slate-200">{data.httpStatus ?? "unknown"}</span>
             </div>
             <div className="flex items-center justify-between rounded-md border border-white/10 bg-black/20 px-3 py-2">
               <span className="text-slate-500">Started</span>
-              <span className="text-slate-300">{new Date(data.startedAt).toLocaleString()}</span>
+              <span className="text-slate-300">{data.startedAt ? new Date(data.startedAt).toLocaleString() : "time unavailable"}</span>
             </div>
           </div>
         </Card>
