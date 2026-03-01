@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Dict, Iterable, List
 
 from .base import BaseTool, ToolExecutionResult
@@ -30,7 +31,19 @@ class ToolCollection:
 
     async def run(self, name: str, arguments: Dict) -> ToolExecutionResult:
         tool = self.get(name)
-        return await tool.execute(arguments)
+        try:
+            return await asyncio.wait_for(
+                tool.execute(arguments),
+                timeout=tool.timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return ToolExecutionResult(
+                success=False,
+                error=(
+                    f"Tool '{name}' timed out after {tool.timeout_seconds}s. "
+                    "Try a smaller operation or retry."
+                ),
+            )
 
     async def close(self) -> None:
         for tool in self._tools.values():
