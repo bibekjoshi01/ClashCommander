@@ -33,6 +33,7 @@ class QAOrchestrator:
         """
         Executes full agent loop.
         """
+        qa_result = QAResult()
 
         messages: List[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt),
@@ -63,20 +64,34 @@ class QAOrchestrator:
                 if not tool:
                     raise RuntimeError(f"Tool '{tool_call.name}' not registered.")
 
-                result = await tool.execute(tool_call.arguments)
+                tool_result = await tool.execute(tool_call.arguments)
 
+                # Append tool output to messages for LLM context
                 messages.append(
                     LLMMessage(
                         role="tool",
                         name=tool_call.name,
-                        content=result,
+                        content=(
+                            tool_result.output
+                            if hasattr(tool_result, "output")
+                            else str(tool_result)
+                        ),
                     )
                 )
 
+                # Collect structured tool result into QAResult
+                qa_result.tool_outputs.append(tool_result)
+
+                # Collect screenshots if available
+                if getattr(tool_result, "screenshot_base64", None):
+                    qa_result.screenshots.append(tool_result.screenshot_base64)
+
+                # Collect issues if the tool provides them
+                if getattr(tool_result, "issues", None):
+                    qa_result.issues.extend(tool_result.issues)
+
         # Final response content = last assistant message
         final_content = messages[-1].content if messages else None
+        qa_result.raw_model_output = final_content
 
-        return QAResult(
-            issues=[],
-            raw_model_output=final_content,
-        )
+        return qa_result

@@ -1,5 +1,20 @@
+from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from dataclasses import dataclass, field
+from typing import Any, Optional, Dict
+
+
+@dataclass
+class ToolExecutionResult:
+    """
+    Standardized output format for all tools.
+    """
+
+    success: bool = True
+    output: Any = None  # textual or structured output
+    error: Optional[str] = None  # error message if failed
+    screenshot_base64: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseTool(ABC):

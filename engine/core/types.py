@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
+
+from engine.tools.base import ToolExecutionResult
 
 
 @dataclass
@@ -27,9 +29,7 @@ class QAIssue:
 
 @dataclass
 class QAResult:
-    """
-    Engine result.
-    """
-
-    issues: List[QAIssue]
-    raw_model_output: Optional[str]
+    issues: List[Dict[str, Any]] = field(default_factory=list)
+    raw_model_output: Optional[str] = None
+    tool_outputs: List[ToolExecutionResult] = field(default_factory=list)
+    screenshots: List[str] = field(default_factory=list)
