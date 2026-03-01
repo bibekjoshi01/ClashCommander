@@ -8,6 +8,8 @@ from engine.core.agent_loop import QAOrchestrator
 from engine.core.types import QAResult, QATask
 from engine.prompts import build_system_prompt, build_user_prompt
 from engine.providers import ProviderFactory
+from engine.core.config import get_settings
+
 from engine.tools import (
     BaseTool,
     BashTool,
@@ -40,11 +42,12 @@ class Engine:
         network_profile: str = "wifi",
     ):
         provider_kwargs = provider_kwargs or {}
+        settings = get_settings()
 
         if provider_name == "mistral":
-            provider_kwargs["api_key"] = os.getenv("MISTRAL_API_KEY", "")
+            provider_kwargs["api_key"] = settings.MISTRAL_API_KEY
         if provider_name == "huggingface":
-            api_key = os.getenv("HUGGINGFACE_API_KEY")
+            api_key = settings.HUGGINGFACE_API_KEY
             if not api_key:
                 raise ValueError(
                     "Hugging Face API key not set. Set HUGGINGFACE_API_KEY in your environment."

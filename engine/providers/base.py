@@ -11,6 +11,7 @@ class LLMMessage:
     content: str
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass

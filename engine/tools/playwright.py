@@ -438,7 +438,12 @@ class PlaywrightComputerTool(BaseTool):
             result.metadata.setdefault("request_failure_count", len(self._request_failures))
             return result
         except Exception as e:
-            error_result = ToolExecutionResult(success=False, error=str(e), metadata={"url": self.current_url})
+            error_message = str(e) or repr(e)
+            error_result = ToolExecutionResult(
+                success=False,
+                error=error_message,
+                metadata={"url": self.current_url},
+            )
             try:
                 shot = await self._take_screenshot()
                 error_result.screenshot_base64 = shot.screenshot_base64

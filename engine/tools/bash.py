@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
+import subprocess
 
 from .base import BaseTool, ToolExecutionResult
 
 
 class _BashSession:
-    command = "/bin/bash"
     sentinel = "<<engine-bash-exit>>"
 
     def __init__(self, timeout_seconds: float = 90.0, output_delay: float = 0.2):
@@ -15,18 +16,30 @@ class _BashSession:
         self.output_delay = output_delay
         self._process: asyncio.subprocess.Process | None = None
         self._timed_out = False
+        self.command = (
+            "powershell -NoLogo -NoProfile -NonInteractive -Command -"
+            if os.name == "nt"
+            else "/bin/bash"
+        )
 
     async def start(self) -> None:
         if self._process and self._process.returncode is None:
             return
+        process_kwargs = {
+            "shell": True,
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "bufsize": 0,
+        }
+        if os.name == "nt":
+            process_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            process_kwargs["preexec_fn"] = os.setsid
+
         self._process = await asyncio.create_subprocess_shell(
             self.command,
-            preexec_fn=os.setsid,
-            shell=True,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            bufsize=0,
+            **process_kwargs,
         )
         self._timed_out = False
 
@@ -34,7 +47,13 @@ class _BashSession:
         if not self._process:
             return
         if self._process.returncode is None:
-            self._process.terminate()
+            if os.name == "nt":
+                self._process.terminate()
+            else:
+                try:
+                    os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+                except Exception:
+                    self._process.terminate()
 
     async def run(self, command: str) -> ToolExecutionResult:
         if not self._process or self._process.returncode is not None:
@@ -54,9 +73,11 @@ class _BashSession:
         assert self._process.stdout is not None
         assert self._process.stderr is not None
 
-        self._process.stdin.write(
-            command.encode() + f"; echo '{self.sentinel}'\n".encode()
-        )
+        if os.name == "nt":
+            wrapped = f"{command}; Write-Output '{self.sentinel}'\n"
+        else:
+            wrapped = f"{command}; echo '{self.sentinel}'\n"
+        self._process.stdin.write(wrapped.encode())
         await self._process.stdin.drain()
 
         try:

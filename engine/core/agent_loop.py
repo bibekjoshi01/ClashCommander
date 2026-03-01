@@ -46,7 +46,24 @@ class QAOrchestrator:
             )
 
             assistant_content = response.content or ""
-            messages.append(LLMMessage(role="assistant", content=assistant_content))
+            assistant_tool_calls = [
+                {
+                    "id": c.id,
+                    "type": "function",
+                    "function": {
+                        "name": c.name,
+                        "arguments": json.dumps(c.arguments),
+                    },
+                }
+                for c in response.tool_calls
+            ]
+            messages.append(
+                LLMMessage(
+                    role="assistant",
+                    content=assistant_content,
+                    tool_calls=assistant_tool_calls or None,
+                )
+            )
             result.raw_model_output = assistant_content
 
             result.trace.append(
@@ -89,7 +106,7 @@ class QAOrchestrator:
         try:
             return await self.tools.run(name=name, arguments=arguments)
         except Exception as exc:
-            return ToolExecutionResult(success=False, error=str(exc))
+            return ToolExecutionResult(success=False, error=str(exc) or repr(exc))
 
     def _tool_result_to_message(self, tool_result: ToolExecutionResult) -> str:
         payload = {

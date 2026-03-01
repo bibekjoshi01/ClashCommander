@@ -37,8 +37,8 @@ async def qa_endpoint(request: QARequest):
 
     try:
         qa_engine = Engine(
-            provider_name="huggingface",
-            model="mistralai/Mistral-7B-Instruct-v0.3",
+            provider_name="mistral",
+            model="mistral-large-latest",
             provider_kwargs=None,
             locale="en-US",
             device_profile=request.device_profile,

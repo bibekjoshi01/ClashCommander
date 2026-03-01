@@ -51,7 +51,7 @@ class MistralProvider(BaseLLMProvider):
                     await asyncio.sleep(0.5 * attempt)
 
         raise RuntimeError(
-            f"Mistral provider failed after {self.max_retries} attempts"
+            f"Mistral provider failed after {self.max_retries} attempts: {last_error}"
         ) from last_error
 
     def _convert_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
@@ -65,6 +65,8 @@ class MistralProvider(BaseLLMProvider):
                 entry["name"] = msg.name
             if msg.tool_call_id:
                 entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                entry["tool_calls"] = msg.tool_calls
             payload.append(entry)
         return payload
 
