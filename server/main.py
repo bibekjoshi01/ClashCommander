@@ -58,7 +58,6 @@ def _normalize_url(url: str) -> str:
 
 
 @app.post("/api/qa", response_model=QAResponse)
-@app.post("/qa", response_model=QAResponse)  # Backward-compatible route
 async def qa_endpoint(request: QARequest):
     target_url = _normalize_url(request.url)
     task = QATask(
