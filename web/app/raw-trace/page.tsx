@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { createMockReport } from "@/lib/mock-data";
-import { RawOutputView } from "@/components/panels/raw-output-view";
 import { TraceVisualization } from "@/components/trace/trace-visualization";
 import { Card } from "@/components/ui/card";
 import { ScanReport } from "@/types/scan";
@@ -37,7 +36,6 @@ export default function RawTracePage() {
 
   return (
     <div className="space-y-6">
-      <RawOutputView report={report} />
       <TraceVisualization trace={report.trace} />
     </div>
   );

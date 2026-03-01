@@ -12,5 +12,5 @@ export default function AccessibilityPage() {
   });
 
   if (!data) return null;
-  return <IssueTable issues={data.issues.filter((item) => item.category === "Accessibility")} />;
+  return <IssueTable issues={data.issues.filter((item) => ["accessibility", "ux"].includes(item.category.toLowerCase()))} />;
 }
