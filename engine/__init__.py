@@ -6,18 +6,51 @@ from engine.core.types import QAResult, QATask
 from engine.prompts import build_system_prompt, build_user_prompt
 from engine.providers import ProviderFactory
 from engine.tools import (
-    AccessibilityAuditTool,
-    ButtonClickCheckerTool,
-    DeadLinkCheckerTool,
-    FormValidatorTool,
-    LoginFlowCheckerTool,
-    NetworkTabAnalyzerTool,
     PlaywrightComputerTool,
-    ResponsiveLayoutCheckerTool,
-    SessionPersistenceCheckerTool,
-    TouchTargetCheckerTool,
     ToolCollection,
 )
+
+try:
+    from engine.tools.console import ConsoleWatcherTool, NetworkMonitorTool
+except ModuleNotFoundError:
+    NetworkMonitorTool = None
+    ConsoleWatcherTool = None
+
+try:
+    from engine.tools.functional import (
+        ButtonClickCheckerTool,
+        DeadLinkCheckerTool,
+        FormValidatorTool,
+        LoginFlowCheckerTool,
+        SessionPersistenceCheckerTool,
+    )
+except ModuleNotFoundError:
+    DeadLinkCheckerTool = None
+    FormValidatorTool = None
+    ButtonClickCheckerTool = None
+    LoginFlowCheckerTool = None
+    SessionPersistenceCheckerTool = None
+
+try:
+    from engine.tools.uiux import (
+        AccessibilityAuditTool,
+        ResponsiveLayoutCheckerTool,
+        TouchTargetCheckerTool,
+    )
+except ModuleNotFoundError:
+    AccessibilityAuditTool = None
+    ResponsiveLayoutCheckerTool = None
+    TouchTargetCheckerTool = None
+
+try:
+    from engine.tools.metadata import SEOMetadataCheckerTool
+except ModuleNotFoundError:
+    SEOMetadataCheckerTool = None
+
+try:
+    from engine.tools.performance import PerformanceAuditTool
+except ModuleNotFoundError:
+    PerformanceAuditTool = None
 
 try:
     from engine.tools.security import (
@@ -27,8 +60,8 @@ try:
     )
 except ModuleNotFoundError:
     SecurityContentAuditTool = None  # type: ignore[assignment]
-    SecurityHeadersAuditTool = None  # type: ignore[assignment]
-    SSLAuditTool = None  # type: ignore[assignment]
+    SecurityHeadersAuditTool = None
+    SSLAuditTool = None
 
 
 class Engine:
@@ -67,14 +100,6 @@ class Engine:
             raise RuntimeError(
                 "Playwright is not installed. Install it to use browser-backed tools."
             )
-        if (
-            SSLAuditTool is None
-            or SecurityHeadersAuditTool is None
-            or SecurityContentAuditTool is None
-        ):
-            raise RuntimeError(
-                "Security toolchain is unavailable because dependencies failed to load."
-            )
 
         computer_tool = PlaywrightComputerTool(
             target_url=target_url,
@@ -83,26 +108,54 @@ class Engine:
             network_profile=self.network_profile,
         )
 
-        return ToolCollection(
-            [
-                DeadLinkCheckerTool(fallback_url=target_url),
-                FormValidatorTool(fallback_url=target_url),
-                ButtonClickCheckerTool(fallback_url=target_url),
+        tools = []
+        if DeadLinkCheckerTool is not None:
+            tools.append(DeadLinkCheckerTool(fallback_url=target_url))
+        if FormValidatorTool is not None:
+            tools.append(FormValidatorTool(fallback_url=target_url))
+        if ButtonClickCheckerTool is not None:
+            tools.append(ButtonClickCheckerTool(fallback_url=target_url))
+        if LoginFlowCheckerTool is not None:
+            tools.append(
                 LoginFlowCheckerTool(
                     computer_tool=computer_tool, fallback_url=target_url
-                ),
+                )
+            )
+        if SessionPersistenceCheckerTool is not None:
+            tools.append(
                 SessionPersistenceCheckerTool(
                     computer_tool=computer_tool, fallback_url=target_url
-                ),
-                NetworkTabAnalyzerTool(computer_tool=computer_tool),
-                AccessibilityAuditTool(fallback_url=target_url),
-                ResponsiveLayoutCheckerTool(fallback_url=target_url),
-                TouchTargetCheckerTool(fallback_url=target_url),
-                SSLAuditTool(fallback_url=target_url),
-                SecurityHeadersAuditTool(fallback_url=target_url),
-                SecurityContentAuditTool(computer_tool=computer_tool),
-            ]
-        )
+                )
+            )
+
+        if AccessibilityAuditTool is not None:
+            tools.append(AccessibilityAuditTool(fallback_url=target_url))
+        if ResponsiveLayoutCheckerTool is not None:
+            tools.append(ResponsiveLayoutCheckerTool(fallback_url=target_url))
+        if TouchTargetCheckerTool is not None:
+            tools.append(TouchTargetCheckerTool(fallback_url=target_url))
+
+        if NetworkMonitorTool is not None:
+            tools.append(NetworkMonitorTool(computer_tool=computer_tool))
+        if ConsoleWatcherTool is not None:
+            tools.append(ConsoleWatcherTool(computer_tool=computer_tool))
+        if SEOMetadataCheckerTool is not None:
+            tools.append(SEOMetadataCheckerTool(computer_tool=computer_tool))
+        if PerformanceAuditTool is not None:
+            tools.append(PerformanceAuditTool(computer_tool=computer_tool))
+
+        if SSLAuditTool is not None:
+            tools.append(SSLAuditTool(fallback_url=target_url))
+        if SecurityHeadersAuditTool is not None:
+            tools.append(SecurityHeadersAuditTool(fallback_url=target_url))
+        if SecurityContentAuditTool is not None:
+            tools.append(SecurityContentAuditTool(computer_tool=computer_tool))
+
+        if not tools:
+            raise RuntimeError(
+                "No tools available. Check optional dependencies and tool modules."
+            )
+        return ToolCollection(tools)
 
     async def run_task(self, task: QATask) -> QAResult:
         # Build tools

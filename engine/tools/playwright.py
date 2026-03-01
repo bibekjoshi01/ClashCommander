@@ -4,7 +4,13 @@ import asyncio
 import base64
 from typing import Any, Literal, get_args
 
-from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 from .base import BaseTool, ToolExecutionResult
 
@@ -249,146 +255,6 @@ class PlaywrightComputerTool(BaseTool):
         await self._ensure_browser()
         return self._response_events[-limit:]
 
-    async def collect_accessibility_signals(self) -> dict[str, Any]:
-        await self._ensure_browser()
-        assert self._page is not None
-        return await self._page.evaluate(
-            """
-            () => {
-                const labelsFor = new Set(
-                  Array.from(document.querySelectorAll('label[for]'))
-                    .map(el => (el.getAttribute('for') || '').trim())
-                    .filter(Boolean)
-                );
-                const imgs = Array.from(document.querySelectorAll('img'));
-                const missingAltImages = imgs
-                  .map((img, idx) => ({
-                    image_index: idx + 1,
-                    id: img.getAttribute('id') || '',
-                    src: img.getAttribute('src') || '',
-                    alt: img.getAttribute('alt'),
-                  }))
-                  .filter(item => !item.alt || !String(item.alt).trim())
-                  .map(item => ({ image_index: item.image_index, id: item.id, src: item.src }));
-
-                const controls = Array.from(document.querySelectorAll('input,textarea,select'))
-                  .filter(el => (el.getAttribute('type') || '').toLowerCase() !== 'hidden');
-                const unlabeledControls = controls
-                  .map((el, idx) => {
-                    const id = el.getAttribute('id') || '';
-                    const ariaLabel = el.getAttribute('aria-label') || '';
-                    const ariaLabelledBy = el.getAttribute('aria-labelledby') || '';
-                    const hasLabel = Boolean(id && labelsFor.has(id));
-                    const hasAria = Boolean(ariaLabel.trim() || ariaLabelledBy.trim());
-                    return {
-                      control_index: idx + 1,
-                      tag: el.tagName.toLowerCase(),
-                      type: (el.getAttribute('type') || 'text').toLowerCase(),
-                      id,
-                      name: el.getAttribute('name') || '',
-                      labeled: hasLabel || hasAria,
-                    };
-                  })
-                  .filter(item => !item.labeled)
-                  .map(({ labeled, ...rest }) => rest);
-
-                const validRoles = new Set([
-                  'button','link','checkbox','radio','textbox','combobox','listbox','menuitem',
-                  'tab','tabpanel','dialog','navigation','main','banner','contentinfo','search',
-                  'status','alert','progressbar','slider','switch'
-                ]);
-                const invalidRoles = Array.from(document.querySelectorAll('[role]'))
-                  .map(el => ({
-                    tag: el.tagName.toLowerCase(),
-                    role: (el.getAttribute('role') || '').toLowerCase().trim(),
-                    id: el.getAttribute('id') || '',
-                  }))
-                  .filter(item => item.role && !validRoles.has(item.role));
-
-                return {
-                  missing_alt_images: missingAltImages,
-                  unlabeled_controls: unlabeledControls,
-                  invalid_roles: invalidRoles,
-                };
-            }
-            """
-        )
-
-    async def collect_responsive_layout_signals(self, overflow_threshold: int = 768) -> dict[str, Any]:
-        await self._ensure_browser()
-        assert self._page is not None
-        return await self._page.evaluate(
-            """
-            (threshold) => {
-                const viewportMeta = document.querySelector('meta[name="viewport"]');
-                const viewportContent = (viewportMeta?.getAttribute('content') || '').toLowerCase();
-                const viewportMetaFound = viewportContent.includes('width=device-width');
-                const viewportWidth = window.innerWidth || 0;
-
-                const all = Array.from(document.querySelectorAll('body *'));
-                const overflowRisk = all
-                  .map((el, idx) => {
-                    const r = el.getBoundingClientRect();
-                    const style = window.getComputedStyle(el);
-                    const cssWidth = parseInt(style.width || '0', 10) || 0;
-                    const width = Math.max(Math.round(r.width), cssWidth);
-                    return {
-                      element_index: idx + 1,
-                      tag: el.tagName.toLowerCase(),
-                      id: el.id || '',
-                      fixed_width_px: width,
-                      exceeds_viewport: width > viewportWidth && viewportWidth > 0,
-                    };
-                  })
-                  .filter(item => item.fixed_width_px >= threshold || item.exceeds_viewport)
-                  .slice(0, 120);
-
-                return {
-                  viewport_meta_found: viewportMetaFound,
-                  overflow_risk_elements: overflowRisk,
-                };
-            }
-            """,
-            overflow_threshold,
-        )
-
-    async def collect_touch_target_details(self, min_size: int = 44) -> dict[str, Any]:
-        await self._ensure_browser()
-        assert self._page is not None
-        return await self._page.evaluate(
-            """
-            (minSize) => {
-                const clickable = Array.from(document.querySelectorAll('a,button,input,textarea,select,[role="button"]'))
-                  .filter(el => {
-                    if (el.tagName.toLowerCase() === 'input') {
-                      const t = (el.getAttribute('type') || 'text').toLowerCase();
-                      return ['button','submit','reset'].includes(t);
-                    }
-                    return true;
-                  });
-
-                const small = clickable
-                  .map((el, idx) => {
-                    const r = el.getBoundingClientRect();
-                    return {
-                      target_index: idx + 1,
-                      tag: el.tagName.toLowerCase(),
-                      id: el.getAttribute('id') || '',
-                      width_px: Math.round(r.width),
-                      height_px: Math.round(r.height),
-                    };
-                  })
-                  .filter(item => item.width_px > 0 && item.height_px > 0 && (item.width_px < minSize || item.height_px < minSize));
-
-                return {
-                  clickable_count: clickable.length,
-                  small_targets: small,
-                };
-            }
-            """,
-            min_size,
-        )
-
     async def navigate(self, url: str) -> None:
         await self._ensure_browser()
         assert self._page is not None
@@ -548,7 +414,9 @@ class PlaywrightComputerTool(BaseTool):
 
         verification = verification or {}
         configured_checks = {
-            "auth_api_endpoint_contains": bool(str(verification.get("auth_api_endpoint_contains") or "").strip()),
+            "auth_api_endpoint_contains": bool(
+                str(verification.get("auth_api_endpoint_contains") or "").strip()
+            ),
             "success_selector": bool(str(verification.get("success_selector") or "").strip()),
             "auth_state_js": bool(str(verification.get("auth_state_js") or "").strip()),
             "token_storage_key": bool(str(verification.get("token_storage_key") or "").strip()),
@@ -557,7 +425,9 @@ class PlaywrightComputerTool(BaseTool):
         deterministic_signals: dict[str, Any] = {}
         if configured_checks["auth_api_endpoint_contains"]:
             endpoint = str(verification.get("auth_api_endpoint_contains")).strip().lower()
-            matching = [item for item in login_responses if endpoint in str(item.get("url", "")).lower()]
+            matching = [
+                item for item in login_responses if endpoint in str(item.get("url", "")).lower()
+            ]
             auth_api_success = any(
                 isinstance(item.get("status"), int) and 200 <= int(item["status"]) < 300
                 for item in matching
@@ -615,9 +485,8 @@ class PlaywrightComputerTool(BaseTool):
             deterministic_signals.get("token_storage_key_present"),
         ]
         has_configured_deterministic_checks = any(configured_checks.values())
-        deterministic_pass = (
-            has_configured_deterministic_checks
-            and all(value is True for value in configured_signal_values if value is not None)
+        deterministic_pass = has_configured_deterministic_checks and all(
+            value is True for value in configured_signal_values if value is not None
         )
 
         heuristic_signals = {
@@ -632,7 +501,9 @@ class PlaywrightComputerTool(BaseTool):
         )
 
         verification_mode = "deterministic" if has_configured_deterministic_checks else "heuristic"
-        likely_success = deterministic_pass if has_configured_deterministic_checks else heuristic_pass
+        likely_success = (
+            deterministic_pass if has_configured_deterministic_checks else heuristic_pass
+        )
         return {
             "before_url": before_url,
             "after_url": after_url,
@@ -767,7 +638,8 @@ class PlaywrightComputerTool(BaseTool):
         self._page = await self._context.new_page()
 
         self._page.on(
-            "console", lambda msg: self._console_events.append(f"[{msg.type}] {msg.text}")
+            "console",
+            lambda msg: self._console_events.append(f"[{msg.type}] {msg.text}"),
         )
         self._page.on("pageerror", lambda exc: self._console_events.append(f"[pageerror] {exc}"))
         self._page.on(
@@ -910,7 +782,13 @@ class PlaywrightComputerTool(BaseTool):
         if action == "cursor_position":
             return ToolExecutionResult(output=f"X={self._cursor_x},Y={self._cursor_y}")
 
-        if action in ("left_click", "right_click", "middle_click", "double_click", "triple_click"):
+        if action in (
+            "left_click",
+            "right_click",
+            "middle_click",
+            "double_click",
+            "triple_click",
+        ):
             x, y = self._validate_coordinate(coordinate, required=False)
             if coordinate is not None:
                 await self._page.mouse.move(x, y)
@@ -1041,3 +919,22 @@ class PlaywrightComputerTool(BaseTool):
         self._console_events = []
         self._request_failures = []
         self._response_events = []
+
+    async def get_page_content(self) -> str:
+        """Fetch full page HTML for SEO / parsing purposes."""
+        await self._ensure_browser()
+        assert self._page is not None
+        return await self._page.content()
+
+    async def goto(self, url: str | None = None):
+        url = url or self._target_url
+        if not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+        await self._ensure_browser()
+        await self._safe_goto(url)
+        self._target_url = url
+
+    async def evaluate_js(self, js_expr: str, *args):
+        await self._ensure_browser()
+        assert self._page is not None
+        return await self._page.evaluate(js_expr, *args)

@@ -1,3 +1,5 @@
-from .network_tab_analyzer import NetworkTabAnalyzerTool
+"""Detects errors in browser runtime."""
 
-__all__ = ["NetworkTabAnalyzerTool"]
+from .console_network import ConsoleWatcherTool, NetworkMonitorTool
+
+__all__ = ["ConsoleWatcherTool", "NetworkMonitorTool"]
