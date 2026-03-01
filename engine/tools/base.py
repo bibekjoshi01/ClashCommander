@@ -1,48 +1,42 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional
 
 
 @dataclass
 class ToolExecutionResult:
-    """
-    Standardized output format for all tools.
-    """
+    """Standardized output format for all tools."""
 
     success: bool = True
-    output: Any = None  # textual or structured output
-    error: Optional[str] = None  # error message if failed
+    output: Optional[str] = None
+    error: Optional[str] = None
     screenshot_base64: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseTool(ABC):
-    """
-    Abstract base class for any tool callable by the LLM.
-    """
+    """Base interface for tools callable by the model."""
 
     name: str
     description: str
-    parameters: Dict[str, Any]
+    input_schema: Dict[str, Any]
 
     @abstractmethod
-    async def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute the tool with validated arguments.
-        Must return JSON-serializable result.
-        """
-        pass
+    async def execute(self, arguments: Dict[str, Any]) -> ToolExecutionResult:
+        raise NotImplementedError
 
     def to_schema(self) -> Dict[str, Any]:
-        """
-        Convert tool definition into OpenAI-compatible function schema.
-        """
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": self.input_schema,
             },
         }
+
+    async def close(self) -> None:
+        """Optional cleanup hook for stateful tools."""
+        return None

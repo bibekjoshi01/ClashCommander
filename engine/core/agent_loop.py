@@ -1,97 +1,100 @@
+from __future__ import annotations
+
 from typing import List
 
-from engine.providers.base import BaseLLMProvider, LLMRequest, LLMMessage
-from engine.tools.base import BaseTool
+from engine.providers.base import BaseLLMProvider, LLMMessage, LLMRequest
+from engine.tools.base import ToolExecutionResult
+from engine.tools.collection import ToolCollection
+
+from .parsing import extract_issues
 from .types import QAResult
 
 
 class QAOrchestrator:
-    """
-    Core agent loop.
-
-    Responsible for:
-    - Iterative LLM calls
-    - Tool execution
-    - Conversation state management
-    """
+    """Provider-agnostic orchestration loop for model + tools."""
 
     def __init__(
         self,
         provider: BaseLLMProvider,
-        tools: List[BaseTool],
-        max_iterations: int = 15,
+        tools: ToolCollection,
+        max_iterations: int = 20,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
     ):
         self.provider = provider
-        self.tools = {tool.name: tool for tool in tools}
+        self.tools = tools
         self.max_iterations = max_iterations
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
-    async def execute(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> QAResult:
-        """
-        Executes full agent loop.
-        """
-        qa_result = QAResult()
-
+    async def execute(self, system_prompt: str, user_prompt: str) -> QAResult:
+        result = QAResult()
         messages: List[LLMMessage] = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=user_prompt),
         ]
 
-        for iteration in range(self.max_iterations):
-
-            request = LLMRequest(messages=messages)
-            response = await self.provider.generate(request)
-
-            # Append assistant message
-            messages.append(
-                LLMMessage(
-                    role="assistant",
-                    content=response.content,
+        for step in range(1, self.max_iterations + 1):
+            response = await self.provider.generate(
+                LLMRequest(
+                    messages=messages,
+                    tools=self.tools.list_schemas(),
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
                 )
             )
 
-            # If no tool calls → finished
+            assistant_content = response.content or ""
+            messages.append(LLMMessage(role="assistant", content=assistant_content))
+            result.raw_model_output = assistant_content
+
+            result.trace.append(
+                {
+                    "step": step,
+                    "assistant_content": assistant_content,
+                    "tool_calls": [
+                        {"id": c.id, "name": c.name, "arguments": c.arguments}
+                        for c in response.tool_calls
+                    ],
+                }
+            )
+
             if not response.tool_calls:
                 break
 
-            # Execute tool calls
-            for tool_call in response.tool_calls:
-                tool = self.tools.get(tool_call.name)
+            for call in response.tool_calls:
+                tool_result = await self._safe_tool_execute(call.name, call.arguments)
+                result.tool_outputs.append(tool_result)
 
-                if not tool:
-                    raise RuntimeError(f"Tool '{tool_call.name}' not registered.")
+                if tool_result.screenshot_base64:
+                    result.screenshots.append(tool_result.screenshot_base64)
 
-                tool_result = await tool.execute(tool_call.arguments)
-
-                # Append tool output to messages for LLM context
                 messages.append(
                     LLMMessage(
                         role="tool",
-                        name=tool_call.name,
-                        content=(
-                            tool_result.output
-                            if hasattr(tool_result, "output")
-                            else str(tool_result)
-                        ),
+                        name=call.name,
+                        tool_call_id=call.id,
+                        content=self._tool_result_to_message(tool_result),
                     )
                 )
 
-                # Collect structured tool result into QAResult
-                qa_result.tool_outputs.append(tool_result)
+        parsed_issues = extract_issues(result.raw_model_output)
+        if parsed_issues:
+            result.issues = parsed_issues
 
-                # Collect screenshots if available
-                if getattr(tool_result, "screenshot_base64", None):
-                    qa_result.screenshots.append(tool_result.screenshot_base64)
+        return result
 
-                # Collect issues if the tool provides them
-                if getattr(tool_result, "issues", None):
-                    qa_result.issues.extend(tool_result.issues)
+    async def _safe_tool_execute(self, name: str, arguments: dict) -> ToolExecutionResult:
+        try:
+            return await self.tools.run(name=name, arguments=arguments)
+        except Exception as exc:
+            return ToolExecutionResult(success=False, error=str(exc))
 
-        # Final response content = last assistant message
-        final_content = messages[-1].content if messages else None
-        qa_result.raw_model_output = final_content
-
-        return qa_result
+    def _tool_result_to_message(self, tool_result: ToolExecutionResult) -> str:
+        if tool_result.success:
+            if tool_result.output:
+                return tool_result.output
+            if tool_result.screenshot_base64:
+                return "Screenshot captured"
+            return "Tool executed successfully"
+        return f"Tool execution failed: {tool_result.error or 'unknown error'}"

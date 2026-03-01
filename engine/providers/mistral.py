@@ -1,32 +1,29 @@
+from __future__ import annotations
+
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 from mistralai import Mistral
 
-from .base import (
-    BaseLLMProvider,
-    LLMRequest,
-    LLMResponse,
-    LLMMessage,
-    LLMToolCall,
-)
+from .base import BaseLLMProvider, LLMMessage, LLMRequest, LLMResponse, LLMToolCall
 from .registry import ProviderRegistry
 
 
 class MistralProvider(BaseLLMProvider):
-    """
-    Async Mistral provider implementation.
-    """
+    """Mistral provider with normalized message/tool-call contracts."""
 
     def __init__(
         self,
         model: str,
         api_key: str,
-        timeout: int = 60,
+        timeout: int = 90,
         max_retries: int = 3,
         **kwargs: Any,
     ):
         super().__init__(model=model, **kwargs)
+        if not api_key:
+            raise ValueError("Missing required provider config: api_key")
         self.client = Mistral(api_key=api_key)
         self.timeout = timeout
         self.max_retries = max_retries
@@ -34,63 +31,69 @@ class MistralProvider(BaseLLMProvider):
     async def generate(self, request: LLMRequest) -> LLMResponse:
         messages = self._convert_messages(request.messages)
 
-        attempt = 0
-        last_exception: Optional[Exception] = None
-
-        while attempt < self.max_retries:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.max_retries + 1):
             try:
                 response = await asyncio.wait_for(
                     self.client.chat.complete_async(
                         model=self.model,
                         messages=messages,
+                        tools=request.tools,
                         temperature=request.temperature,
                         max_tokens=request.max_tokens,
-                        tools=request.tools,
-                        response_format=request.response_format,
                     ),
                     timeout=self.timeout,
                 )
-
                 return self._normalize_response(response)
-
-            except Exception as e:
-                last_exception = e
-                attempt += 1
-                await asyncio.sleep(0.5 * attempt)
+            except Exception as err:
+                last_error = err
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.5 * attempt)
 
         raise RuntimeError(
-            f"MistralProvider failed after {self.max_retries} attempts"
-        ) from last_exception
+            f"Mistral provider failed after {self.max_retries} attempts"
+        ) from last_error
 
     def _convert_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
-        return [
-            {
+        payload: List[Dict[str, Any]] = []
+        for msg in messages:
+            entry: Dict[str, Any] = {
                 "role": msg.role,
                 "content": msg.content,
-                **({"name": msg.name} if msg.name else {}),
             }
-            for msg in messages
-        ]
+            if msg.name:
+                entry["name"] = msg.name
+            if msg.tool_call_id:
+                entry["tool_call_id"] = msg.tool_call_id
+            payload.append(entry)
+        return payload
 
     def _normalize_response(self, response: Any) -> LLMResponse:
         choice = response.choices[0]
         message = choice.message
 
-        content = message.content
+        tool_calls: List[LLMToolCall] = []
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            raw_args = tool_call.function.arguments
+            args: Dict[str, Any]
+            if isinstance(raw_args, str):
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    args = {"raw_arguments": raw_args}
+            else:
+                args = raw_args or {}
 
-        tool_calls: Optional[List[LLMToolCall]] = None
-
-        if getattr(message, "tool_calls", None):
-            tool_calls = [
+            tool_calls.append(
                 LLMToolCall(
+                    id=getattr(tool_call, "id", f"tool_{len(tool_calls)}"),
                     name=tool_call.function.name,
-                    arguments=tool_call.function.arguments,
+                    arguments=args,
                 )
-                for tool_call in message.tool_calls
-            ]
+            )
 
         return LLMResponse(
-            content=content,
+            content=getattr(message, "content", None),
             tool_calls=tool_calls,
             raw=response,
         )

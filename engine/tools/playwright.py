@@ -1,0 +1,394 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+from typing import Any, Dict, Literal, Optional, get_args
+
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
+
+from .base import BaseTool, ToolExecutionResult
+
+Action = Literal[
+    "key",
+    "type",
+    "mouse_move",
+    "left_click",
+    "left_click_drag",
+    "right_click",
+    "middle_click",
+    "double_click",
+    "triple_click",
+    "screenshot",
+    "cursor_position",
+    "left_mouse_down",
+    "left_mouse_up",
+    "scroll",
+    "hold_key",
+    "wait",
+]
+
+ScrollDirection = Literal["up", "down", "left", "right"]
+
+DEVICE_PROFILES: Dict[str, Dict[str, Any]] = {
+    "iphone_14": {
+        "viewport": {"width": 390, "height": 844},
+        "user_agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+        ),
+        "device_scale_factor": 3,
+        "is_mobile": True,
+        "has_touch": True,
+    },
+    "desktop": {
+        "viewport": {"width": 1280, "height": 800},
+        "user_agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "device_scale_factor": 1,
+        "is_mobile": False,
+        "has_touch": False,
+    },
+}
+
+NETWORK_PROFILES: Dict[str, Dict[str, Any]] = {
+    "wifi": {},
+    "4g": {
+        "offline": False,
+        "download_throughput": 9000 * 1024 // 8,
+        "upload_throughput": 9000 * 1024 // 8,
+        "latency": 80,
+    },
+    "slow_3g": {
+        "offline": False,
+        "download_throughput": 400 * 1024 // 8,
+        "upload_throughput": 400 * 1024 // 8,
+        "latency": 400,
+    },
+}
+
+KEY_ALIAS: Dict[str, str] = {
+    "return": "Enter",
+    "enter": "Enter",
+    "esc": "Escape",
+    "escape": "Escape",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "ctrl": "Control",
+    "command": "Meta",
+    "cmd": "Meta",
+    "meta": "Meta",
+    "arrowup": "ArrowUp",
+    "arrowdown": "ArrowDown",
+    "arrowleft": "ArrowLeft",
+    "arrowright": "ArrowRight",
+}
+
+
+class PlaywrightComputerTool(BaseTool):
+    name = "computer"
+    description = "Control a Playwright browser with coordinate-based actions."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "key",
+                    "type",
+                    "mouse_move",
+                    "left_click",
+                    "left_click_drag",
+                    "right_click",
+                    "middle_click",
+                    "double_click",
+                    "triple_click",
+                    "screenshot",
+                    "cursor_position",
+                    "left_mouse_down",
+                    "left_mouse_up",
+                    "scroll",
+                    "hold_key",
+                    "wait",
+                ],
+            },
+            "text": {"type": "string"},
+            "coordinate": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+            },
+            "start_coordinate": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+            },
+            "scroll_direction": {
+                "type": "string",
+                "enum": ["up", "down", "left", "right"],
+            },
+            "scroll_amount": {"type": "integer", "minimum": 0},
+            "duration": {"type": "number", "minimum": 0, "maximum": 100},
+        },
+        "required": ["action"],
+    }
+
+    def __init__(
+        self,
+        target_url: Optional[str] = None,
+        device_profile: str = "iphone_14",
+        network_profile: str = "wifi",
+        locale: str = "en-US",
+        screenshot_delay: float = 0.8,
+    ):
+        self._target_url = target_url
+        self._device = DEVICE_PROFILES.get(device_profile, DEVICE_PROFILES["iphone_14"])
+        self._network = NETWORK_PROFILES.get(network_profile, NETWORK_PROFILES["wifi"])
+        self._locale = locale
+        self._screenshot_delay = screenshot_delay
+
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+
+        self._cursor_x = 0
+        self._cursor_y = 0
+
+    def _translate_key(self, key_name: str) -> str:
+        if "+" in key_name:
+            parts = [p.strip() for p in key_name.split("+")]
+            return "+".join(KEY_ALIAS.get(p.lower(), p) for p in parts)
+        return KEY_ALIAS.get(key_name.lower(), key_name)
+
+    async def _ensure_browser(self) -> None:
+        if self._page is not None:
+            return
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        )
+
+        context_opts = {
+            "viewport": self._device["viewport"],
+            "user_agent": self._device["user_agent"],
+            "device_scale_factor": self._device["device_scale_factor"],
+            "is_mobile": self._device["is_mobile"],
+            "has_touch": self._device["has_touch"],
+            "locale": self._locale,
+        }
+
+        self._context = await self._browser.new_context(**context_opts)
+        self._page = await self._context.new_page()
+
+        if self._network and self._network.get("latency") is not None:
+            try:
+                cdp = await self._context.new_cdp_session(self._page)
+                await cdp.send(
+                    "Network.emulateNetworkConditions",
+                    {
+                        "offline": self._network.get("offline", False),
+                        "downloadThroughput": self._network.get("download_throughput", -1),
+                        "uploadThroughput": self._network.get("upload_throughput", -1),
+                        "latency": self._network.get("latency", 0),
+                    },
+                )
+            except Exception:
+                pass
+
+        if self._target_url:
+            url = self._target_url
+            if not url.startswith(("http://", "https://")):
+                url = f"https://{url}"
+            await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+    async def _take_screenshot(self) -> ToolExecutionResult:
+        assert self._page is not None
+        png_bytes = await self._page.screenshot(type="png")
+        image_b64 = base64.b64encode(png_bytes).decode("utf-8")
+        return ToolExecutionResult(success=True, screenshot_base64=image_b64)
+
+    def _validate_coordinate(self, coordinate: Any, required: bool = True) -> tuple[int, int]:
+        if coordinate is None:
+            if required:
+                raise ValueError("coordinate is required")
+            return self._cursor_x, self._cursor_y
+
+        if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+            raise ValueError("coordinate must be [x, y]")
+
+        width = self._device["viewport"]["width"]
+        height = self._device["viewport"]["height"]
+
+        x = max(0, min(int(coordinate[0]), width - 1))
+        y = max(0, min(int(coordinate[1]), height - 1))
+        return x, y
+
+    async def execute(self, arguments: dict) -> ToolExecutionResult:
+        action = arguments.get("action")
+        if not action:
+            return ToolExecutionResult(success=False, error="Missing 'action'")
+
+        await self._ensure_browser()
+        assert self._page is not None
+
+        try:
+            result = await self._dispatch_action(
+                action=action,
+                text=arguments.get("text"),
+                coordinate=arguments.get("coordinate"),
+                start_coordinate=arguments.get("start_coordinate"),
+                scroll_direction=arguments.get("scroll_direction"),
+                scroll_amount=arguments.get("scroll_amount"),
+                duration=arguments.get("duration"),
+            )
+            return result
+        except Exception as e:
+            return ToolExecutionResult(success=False, error=str(e))
+
+    async def _dispatch_action(
+        self,
+        *,
+        action: Action,
+        text: Optional[str],
+        coordinate: Any,
+        start_coordinate: Any,
+        scroll_direction: Optional[str],
+        scroll_amount: Optional[int],
+        duration: Optional[float],
+    ) -> ToolExecutionResult:
+        assert self._page is not None
+
+        if action == "screenshot":
+            return await self._take_screenshot()
+
+        if action == "cursor_position":
+            return ToolExecutionResult(output=f"X={self._cursor_x},Y={self._cursor_y}")
+
+        if action in ("left_click", "right_click", "middle_click", "double_click", "triple_click"):
+            x, y = self._validate_coordinate(coordinate, required=False)
+            if coordinate is not None:
+                await self._page.mouse.move(x, y)
+                self._cursor_x, self._cursor_y = x, y
+
+            button = "left"
+            if action == "right_click":
+                button = "right"
+            elif action == "middle_click":
+                button = "middle"
+
+            click_count = 1
+            if action == "double_click":
+                click_count = 2
+            elif action == "triple_click":
+                click_count = 3
+
+            await self._page.mouse.click(self._cursor_x, self._cursor_y, button=button, click_count=click_count)
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "mouse_move":
+            x, y = self._validate_coordinate(coordinate)
+            await self._page.mouse.move(x, y)
+            self._cursor_x, self._cursor_y = x, y
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "left_click_drag":
+            sx, sy = self._validate_coordinate(start_coordinate)
+            ex, ey = self._validate_coordinate(coordinate)
+            await self._page.mouse.move(sx, sy)
+            await self._page.mouse.down()
+            await self._page.mouse.move(ex, ey, steps=10)
+            await self._page.mouse.up()
+            self._cursor_x, self._cursor_y = ex, ey
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "left_mouse_down":
+            await self._page.mouse.down()
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "left_mouse_up":
+            await self._page.mouse.up()
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "type":
+            if not text:
+                raise ValueError("type requires 'text'")
+            await self._page.keyboard.type(text, delay=12)
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "key":
+            if not text:
+                raise ValueError("key requires 'text'")
+            keys = text.split(" ") if "+" not in text and " " in text else [text]
+            for key in keys:
+                k = self._translate_key(key.strip())
+                if k:
+                    await self._page.keyboard.press(k)
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "scroll":
+            if scroll_direction not in get_args(ScrollDirection):
+                raise ValueError("scroll_direction must be one of: up, down, left, right")
+            if not isinstance(scroll_amount, int) or scroll_amount < 0:
+                raise ValueError("scroll_amount must be a non-negative integer")
+
+            if coordinate is not None:
+                x, y = self._validate_coordinate(coordinate)
+                await self._page.mouse.move(x, y)
+                self._cursor_x, self._cursor_y = x, y
+
+            delta = scroll_amount * 100
+            if scroll_direction == "up":
+                await self._page.mouse.wheel(0, -delta)
+            elif scroll_direction == "down":
+                await self._page.mouse.wheel(0, delta)
+            elif scroll_direction == "left":
+                await self._page.mouse.wheel(-delta, 0)
+            elif scroll_direction == "right":
+                await self._page.mouse.wheel(delta, 0)
+
+            await asyncio.sleep(self._screenshot_delay)
+            return await self._take_screenshot()
+
+        if action == "hold_key":
+            if not text:
+                raise ValueError("hold_key requires 'text'")
+            if duration is None or duration < 0 or duration > 100:
+                raise ValueError("duration must be between 0 and 100")
+            key = self._translate_key(text)
+            await self._page.keyboard.down(key)
+            await asyncio.sleep(duration)
+            await self._page.keyboard.up(key)
+            return await self._take_screenshot()
+
+        if action == "wait":
+            if duration is None or duration < 0 or duration > 100:
+                raise ValueError("duration must be between 0 and 100")
+            await asyncio.sleep(duration)
+            return await self._take_screenshot()
+
+        raise ValueError(f"Invalid action: {action}")
+
+    async def close(self) -> None:
+        if self._context:
+            await self._context.close()
+        if self._browser:
+            await self._browser.close()
+        if self._playwright:
+            await self._playwright.stop()
+        self._context = None
+        self._browser = None
+        self._playwright = None
+        self._page = None
