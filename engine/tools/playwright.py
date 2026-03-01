@@ -220,6 +220,7 @@ class PlaywrightComputerTool(BaseTool):
 
         self._console_events: list[str] = []
         self._request_failures: list[str] = []
+        self._startup_error: Optional[str] = None
 
     @property
     def current_url(self) -> Optional[str]:
@@ -328,14 +329,26 @@ class PlaywrightComputerTool(BaseTool):
         )
 
     async def _ensure_browser(self) -> None:
+        if self._startup_error:
+            raise RuntimeError(self._startup_error)
         if self._page is not None:
             return
 
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
+        try:
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+        except NotImplementedError as exc:
+            self._startup_error = (
+                "Playwright browser startup failed: current event loop does not support subprocesses. "
+                "Ensure WindowsProactorEventLoopPolicy is configured at process startup."
+            )
+            raise RuntimeError(self._startup_error) from exc
+        except Exception as exc:
+            self._startup_error = f"Playwright browser startup failed: {str(exc) or repr(exc)}"
+            raise RuntimeError(self._startup_error) from exc
 
         context_opts = {
             "viewport": self._device["viewport"],
@@ -426,10 +439,9 @@ class PlaywrightComputerTool(BaseTool):
         if not action:
             return ToolExecutionResult(success=False, error="Missing 'action'")
 
-        await self._ensure_browser()
-        assert self._page is not None
-
         try:
+            await self._ensure_browser()
+            assert self._page is not None
             result = await self._dispatch_action(
                 action=action,
                 text=arguments.get("text"),
