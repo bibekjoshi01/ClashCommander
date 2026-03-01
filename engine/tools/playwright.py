@@ -353,9 +353,7 @@ class PlaywrightComputerTool(BaseTool):
         self._page.on("pageerror", lambda exc: self._console_events.append(f"[pageerror] {exc}"))
         self._page.on(
             "requestfailed",
-            lambda req: self._request_failures.append(
-                f"{req.method} {req.url} :: {req.failure.error_text if req.failure else 'failed'}"
-            ),
+            lambda req: self._request_failures.append(self._format_request_failure(req)),
         )
 
         if self._network and self._network.get("latency") is not None:
@@ -386,6 +384,16 @@ class PlaywrightComputerTool(BaseTool):
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
         except Exception:
             await self._page.goto(url, wait_until="load", timeout=45000)
+
+    def _format_request_failure(self, request: Any) -> str:
+        failure = getattr(request, "failure", None)
+        if isinstance(failure, str):
+            reason = failure
+        elif failure is None:
+            reason = "failed"
+        else:
+            reason = getattr(failure, "error_text", None) or str(failure)
+        return f"{request.method} {request.url} :: {reason}"
 
     async def _take_screenshot(self) -> ToolExecutionResult:
         assert self._page is not None

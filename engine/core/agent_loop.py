@@ -99,6 +99,8 @@ class QAOrchestrator:
         parsed_issues = extract_issues(result.raw_model_output)
         if parsed_issues:
             result.issues = parsed_issues
+        if not self._has_successful_evidence(result):
+            result.issues = [self._build_tooling_blocker_issue(result.tool_outputs)]
 
         return result
 
@@ -117,3 +119,49 @@ class QAOrchestrator:
             "metadata": tool_result.metadata,
         }
         return json.dumps(payload)
+
+    def _has_successful_evidence(self, result: QAResult) -> bool:
+        if result.screenshots:
+            return True
+        for output in result.tool_outputs:
+            if output.success and (output.output or output.screenshot_base64):
+                return True
+        return False
+
+    def _build_tooling_blocker_issue(
+        self, tool_outputs: List[ToolExecutionResult]
+    ) -> dict:
+        errors = []
+        for output in tool_outputs:
+            if output.error:
+                errors.append(output.error)
+        unique_errors = []
+        seen = set()
+        for error in errors:
+            if error not in seen:
+                seen.add(error)
+                unique_errors.append(error)
+
+        steps = [
+            "Run the QA task against the target URL.",
+            "Observe repeated tool execution failures with no usable evidence.",
+        ]
+        if unique_errors:
+            steps.extend([f"Tool error: {e}" for e in unique_errors[:3]])
+
+        description = "Automated QA tooling failed before reliable site evidence was collected."
+        if unique_errors:
+            description += f" Errors observed: {' | '.join(unique_errors[:3])}"
+
+        return {
+            "id": "ISSUE-TOOLING-1",
+            "severity": "P1",
+            "title": "QA tooling failure blocks verified site assessment",
+            "description": description,
+            "steps_to_reproduce": steps,
+            "category": "functional",
+            "severity_justification": (
+                "Without successful tool execution or screenshots, findings on the target site "
+                "cannot be validated."
+            ),
+        }

@@ -1,115 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import signal
 import subprocess
 
 from .base import BaseTool, ToolExecutionResult
 
 
-class _BashSession:
-    sentinel = "<<engine-bash-exit>>"
-
-    def __init__(self, timeout_seconds: float = 90.0, output_delay: float = 0.2):
-        self.timeout_seconds = timeout_seconds
-        self.output_delay = output_delay
-        self._process: asyncio.subprocess.Process | None = None
-        self._timed_out = False
-        self.command = (
-            "powershell -NoLogo -NoProfile -NonInteractive -Command -"
-            if os.name == "nt"
-            else "/bin/bash"
-        )
-
-    async def start(self) -> None:
-        if self._process and self._process.returncode is None:
-            return
-        process_kwargs = {
-            "shell": True,
-            "stdin": asyncio.subprocess.PIPE,
-            "stdout": asyncio.subprocess.PIPE,
-            "stderr": asyncio.subprocess.PIPE,
-            "bufsize": 0,
-        }
-        if os.name == "nt":
-            process_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            process_kwargs["preexec_fn"] = os.setsid
-
-        self._process = await asyncio.create_subprocess_shell(
-            self.command,
-            **process_kwargs,
-        )
-        self._timed_out = False
-
-    def stop(self) -> None:
-        if not self._process:
-            return
-        if self._process.returncode is None:
-            if os.name == "nt":
-                self._process.terminate()
-            else:
-                try:
-                    os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
-                except Exception:
-                    self._process.terminate()
-
-    async def run(self, command: str) -> ToolExecutionResult:
-        if not self._process or self._process.returncode is not None:
-            await self.start()
-
-        if self._timed_out:
-            return ToolExecutionResult(
-                success=False,
-                error=(
-                    "bash session timed out previously; call bash with "
-                    "{'restart': true} to continue"
-                ),
-            )
-
-        assert self._process is not None
-        assert self._process.stdin is not None
-        assert self._process.stdout is not None
-        assert self._process.stderr is not None
-
-        if os.name == "nt":
-            wrapped = f"{command}; Write-Output '{self.sentinel}'\n"
-        else:
-            wrapped = f"{command}; echo '{self.sentinel}'\n"
-        self._process.stdin.write(wrapped.encode())
-        await self._process.stdin.drain()
-
-        try:
-            async with asyncio.timeout(self.timeout_seconds):
-                while True:
-                    await asyncio.sleep(self.output_delay)
-                    out = self._process.stdout._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
-                    if self.sentinel in out:
-                        out = out[: out.index(self.sentinel)]
-                        break
-        except asyncio.TimeoutError:
-            self._timed_out = True
-            return ToolExecutionResult(
-                success=False,
-                error=f"bash command timed out after {self.timeout_seconds}s",
-            )
-
-        err = self._process.stderr._buffer.decode()  # pyright: ignore[reportAttributeAccessIssue]
-
-        self._process.stdout._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
-        self._process.stderr._buffer.clear()  # pyright: ignore[reportAttributeAccessIssue]
-
-        return ToolExecutionResult(
-            success=True,
-            output=out.rstrip("\n"),
-            error=err.rstrip("\n") or None,
-        )
-
-
 class BashTool(BaseTool):
     name = "bash"
-    description = "Execute shell commands in a persistent bash session."
+    description = "Execute shell commands."
     input_schema = {
         "type": "object",
         "properties": {
@@ -118,27 +17,44 @@ class BashTool(BaseTool):
         },
         "required": [],
     }
-
-    def __init__(self):
-        self._session = _BashSession()
+    timeout_seconds = 90
 
     async def execute(self, arguments: dict) -> ToolExecutionResult:
-        restart = bool(arguments.get("restart", False))
-        command = arguments.get("command")
-
-        if restart:
-            self._session.stop()
-            self._session = _BashSession()
-            await self._session.start()
+        # Backward-compatible with prior persistent-session contract.
+        if bool(arguments.get("restart", False)):
             return ToolExecutionResult(success=True, output="bash session restarted")
 
+        command = arguments.get("command")
         if not command:
             return ToolExecutionResult(
                 success=False,
                 error="Missing 'command'. Provide {'command': '<shell command>'}",
             )
 
-        return await self._session.run(command)
+        try:
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            return ToolExecutionResult(
+                success=False,
+                error=f"bash command timed out after {self.timeout_seconds}s",
+            )
+        except Exception as exc:
+            return ToolExecutionResult(success=False, error=str(exc) or repr(exc))
 
-    async def close(self) -> None:
-        self._session.stop()
+        stderr = (completed.stderr or "").strip() or None
+        stdout = (completed.stdout or "").strip() or None
+        success = completed.returncode == 0
+
+        return ToolExecutionResult(
+            success=success,
+            output=stdout,
+            error=stderr,
+            metadata={"returncode": completed.returncode},
+        )

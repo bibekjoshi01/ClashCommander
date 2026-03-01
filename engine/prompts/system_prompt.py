@@ -34,6 +34,8 @@ Rules:
 - Use tools iteratively and reason from observed UI state.
 - Run `page_audit`, `console_network_audit`, `performance_audit`, and `security_headers_audit` at least once when relevant.
 - If blocked by CAPTCHA/OTP/auth walls, report that explicitly and continue with public flows.
+- Do not invent findings from prior knowledge or simulation.
+- If tools fail or evidence is insufficient, return only blocker issues tied to tool errors.
 - Keep severity strict: P0, P1, P2, P3.
 - If CAPTCHA/OTP blocks core functionality, treat as P1 and include evidence.
 
