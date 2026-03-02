@@ -179,23 +179,25 @@ export function IssueTable({ issues }: { issues: ScanIssue[] }) {
 
                 {expanded === item.id && (
                   <tr>
-                    <TD colSpan={4} className="bg-slate-50">
-                      <div className="space-y-3 text-sm">
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Description</p>
-                          <p className="mt-1 text-slate-700">{item.description || "Not provided"}</p>
+                    <TD colSpan={4} className="bg-slate-50 p-4">
+                      <div className="space-y-4 text-sm">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Description</p>
+                          <p className="mt-2 whitespace-pre-line leading-6 text-slate-700">{item.description || "Not provided"}</p>
                         </div>
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Severity Justification</p>
-                          <p className="mt-1 text-slate-700">{item.severityJustification || "Not provided"}</p>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Severity Justification</p>
+                          <p className="mt-2 whitespace-pre-line leading-6 text-slate-700">{item.severityJustification || "Not provided"}</p>
                         </div>
-                        <div>
-                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Steps To Reproduce</p>
-                          {item.stepsToReproduce.length === 0 && <p className="mt-1 text-slate-600">Not provided</p>}
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Steps To Reproduce</p>
+                          {item.stepsToReproduce.length === 0 && <p className="mt-2 text-slate-600">Not provided</p>}
                           {item.stepsToReproduce.length > 0 && (
-                            <ol className="mt-1 space-y-1 text-slate-700">
+                            <ol className="mt-2 list-decimal space-y-2 pl-5 text-slate-700">
                               {item.stepsToReproduce.map((step, index) => (
-                                <li key={`${item.id}-${index}`}>{step}</li>
+                                <li key={`${item.id}-${index}`} className="leading-6">
+                                  {step}
+                                </li>
                               ))}
                             </ol>
                           )}
